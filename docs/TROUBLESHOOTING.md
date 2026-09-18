@@ -117,3 +117,85 @@ ESP-IDF 명령 프롬프트를 새로 열면 항상 IDF 설치 폴더에서 시�
 
 `idf.py`를 치기 전에 프롬프트에 찍힌 경로가 프로젝트 루트인지 확인한다. ESP-IDF는
 프로젝트 위치를 환경변수가 아니라 **cwd**로 판단한다.
+
+---
+
+## 3. `heap_trace_dump_caps()` 호출 직후 인터럽트 워치독으로 죽음
+
+**발생 시점:** Phase 2 (2026-09-19)
+**환경:** ESP-IDF v5.5.5, `CONFIG_HEAP_TRACING_STANDALONE=y`, 콘솔 115200 baud
+
+### 증상
+
+TLS 핸드셰이크 한 번을 heap tracing으로 추적하고 `heap_trace_dump_caps()`로 덤프하자,
+덤프가 **중간에 잘리면서** 코어가 죽었다. 리셋 후 재시도해도 매번 같은 자리쯤에서
+죽는다. 4회 연속 재현.
+
+```
+I (9308) probe: alloc=264 free=691 기록=264/1024 최대=264 overflow=아니오
+I (9308) probe: ---- 내부 SRAM 할당 덤프 ----
+====== Heap Trace: 264 records (1024 capacity) ======
+   224 bytes (@ 0x3fcb964c, Internal) allocated CPU 0 ccount 0x495656ac ...
+   (약 25개 출력 후)
+    18 bytes (@ 0x3fcb9a38, Internal) allocated CPU 0Guru Meditation Error:
+    Core  1 panic'ed (Interrupt wdt timeout on CPU1).
+```
+
+패닉 메시지가 **출력 줄 한가운데를 끊고** 끼어든 점이 단서였다. 출력하는 도중에
+죽었다는 뜻이다.
+
+### 원인
+
+`heap_trace_dump_base()`가 **덤프 전체를 하나의 critical section 안에서** 돌린다.
+
+```c
+static void heap_trace_dump_base(bool internal_ram, bool psram)
+{
+    portENTER_CRITICAL(&trace_mux);          // heap_trace_standalone.c:343
+    ...
+        esp_rom_printf("%6d bytes (@ %p%s) allocated CPU %d ccount 0x%08x", ...);
+    ...                                       // 레코드마다 여러 번
+    portEXIT_CRITICAL(&trace_mux);
+}
+```
+
+`esp_rom_printf`는 UART가 비워질 때까지 도는 블로킹 출력이다. 레코드 264개에
+레코드당 약 100바이트면 **26KB**이고, 115200 baud에서 약 **2.3초**가 걸린다.
+그 시간 내내 인터럽트가 꺼져 있으므로 인터럽트 워치독(기본 300ms)이 먼저 터진다.
+
+즉 **버그가 아니라 규모 문제**다. 레코드 수십 개짜리 예제에서는 드러나지 않는다.
+
+### 해결
+
+`heap_trace_dump_caps()`를 쓰지 않고 직접 순회했다. `heap_trace_get()`은 **호출마다**
+락을 잡고 놓으므로(`heap_trace_standalone.c:269`) critical section이 레코드 하나
+길이로 짧아진다.
+
+```c
+size_t n = heap_trace_get_count();
+for (size_t i = 0; i < n; i++) {
+    heap_trace_record_t r;
+    if (heap_trace_get(i, &r) != ESP_OK) break;
+    if (!esp_ptr_internal(r.address)) continue;   // 표적은 내부 SRAM
+    ESP_LOGI(TAG, "R,%u,%u,%p,%d,%p,%p", ...);
+}
+```
+
+`ESP_LOGI`는 UART VFS를 거치므로 출력 중에 태스크가 양보한다. 덤으로 출력 형식을
+직접 정할 수 있어 CSV로 뽑아 후처리가 쉬워졌고, `esp_ptr_internal()`로 걸러
+PSRAM 레코드를 빼면서 줄 수도 줄었다.
+
+콘솔 baud를 921600으로 올리는 방법도 있지만 2.3초 → 0.29초일 뿐이라 300ms 한계에
+여전히 아슬아슬하다. **원인이 시간이 아니라 critical section이므로 그쪽을 고쳐야 한다.**
+
+### 교훈
+
+**IDF가 주는 편의 함수라고 해서 내 규모에서 안전한 것은 아니다.**
+
+`heap_trace_dump_caps()`는 API 문서에 "It is safe to call this function while heap
+tracing is running"이라고만 적혀 있고, 얼마나 오래 인터럽트를 끄는지는 말하지 않는다.
+증상이 "출력 중간에 죽음"이었으므로 **출력 코드 자체를 읽는 것**이 가장 빨랐다.
+
+계측 코드가 관측 대상을 오염시키는 문제(Observer Effect)의 또 다른 얼굴이기도 하다.
+이 프로젝트는 계측 태스크를 전부 정적으로 올려 **메모리** 오염을 막았는데, 여기서는
+**시간** 쪽으로 같은 문제가 나왔다.
