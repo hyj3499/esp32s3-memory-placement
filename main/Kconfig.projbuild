@@ -1,0 +1,45 @@
+# 이 프로젝트의 런타임 설정.
+#
+# menuconfig에 메뉴 하나로 뜨고, 값은 sdkconfig에 저장된다.
+# sdkconfig는 .gitignore에 있으므로 여기 넣은 Wi-Fi 비밀번호는 커밋되지 않는다.
+#
+# 주의: sdkconfig.defaults에는 절대 넣지 말 것. 그 파일은 커밋된다.
+#
+# 프롬프트와 help는 영문으로 둔다. Windows의 menuconfig(ncurses)에서
+# 한글이 깨져 보이는 경우가 있어서다. 설명은 이 주석으로 대신한다.
+
+menu "Multi-heap Manager"
+
+    # Wi-Fi 자격증명.
+    # 기본값을 빈 문자열로 둔 것은 의도적이다. "myssid" 같은 더미를 넣어두면
+    # 설정을 깜빡했을 때 "연결 실패" 로그만 보고 원인을 한참 찾게 된다.
+    config MHM_WIFI_SSID
+        string "WiFi SSID"
+        default ""
+        help
+            SSID of the access point to connect to.
+            Stored in sdkconfig, which is gitignored.
+
+    config MHM_WIFI_PASSWORD
+        string "WiFi password"
+        default ""
+        help
+            WPA/WPA2 password. Leave empty for an open network.
+
+    # 무한 재시도를 막는다. AP가 아예 없을 때 로그가 끝없이 흐르면
+    # 힙 스냅샷 출력이 묻혀서 Phase 1의 목적을 해친다.
+    config MHM_WIFI_MAX_RETRY
+        int "Maximum connection retries"
+        default 5
+        help
+            Give up after this many failed attempts.
+
+    # Phase 1 부하의 대상. howsmyssl.com은 IDF 예제가 쓰는 곳으로,
+    # 인증서 번들(기본 활성)에 포함된 공개 루트 CA로 검증된다.
+    config MHM_LOAD_URL
+        string "HTTPS target URL for the load generator"
+        default "https://www.howsmyssl.com/a/check"
+        help
+            Endpoint requested repeatedly to exercise the TLS stack.
+
+endmenu
