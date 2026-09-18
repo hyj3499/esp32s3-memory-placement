@@ -1,47 +1,21 @@
-#include "esp_heap_caps.h"
+#include "esp_err.h"
 #include "esp_log.h"
 
-static const char *TAG = "snapshot";
+#include "mem_snapshot.h"
+#include "wifi_conn.h"
 
-static const struct {
-    const char *name;
-    uint32_t    caps;
-} k_regions[] = {
-    { "INTERNAL",      MALLOC_CAP_INTERNAL                   },
-    { "INTERNAL|8BIT", MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT },
-    { "SPIRAM",        MALLOC_CAP_SPIRAM                     },
-    { "DMA",           MALLOC_CAP_DMA                        },
-};
-
-static unsigned frag_percent(const multi_heap_info_t *info)
-{
-    if (info->total_free_bytes == 0) {
-        return 0;
-    }
-    return 100u - (unsigned)((info->largest_free_block * 100u) / info->total_free_bytes);
-}
-
-static void log_snapshot(void)
-{
-    ESP_LOGI(TAG, "%-14s %10s %10s %10s %10s %5s",
-             "region", "free", "largest", "min_free", "alloc", "frag");
-
-    for (size_t i = 0; i < sizeof(k_regions) / sizeof(k_regions[0]); i++) {
-        multi_heap_info_t info;
-        heap_caps_get_info(&info, k_regions[i].caps);
-
-        ESP_LOGI(TAG, "%-14s %10zu %10zu %10zu %10zu %4u%%",
-                 k_regions[i].name,
-                 info.total_free_bytes,
-                 info.largest_free_block,
-                 info.minimum_free_bytes,
-                 info.total_allocated_bytes,
-                 frag_percent(&info));
-    }
-}
+static const char *TAG = "app";
 
 void app_main(void)
 {
-    ESP_LOGI(TAG, "==== boot snapshot ====");
-    log_snapshot();
+    /* 측정 지점 B~E 는 각 단계 안쪽에 있어야 의미가 있어 해당 모듈이 직접 찍는다. */
+    mem_snapshot_log("A: 부팅 직후 baseline");
+
+    esp_err_t err = wifi_conn_start();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Wi-Fi 연결 실패: %s", esp_err_to_name(err));
+        return;
+    }
+
+    ESP_LOGI(TAG, "Wi-Fi 준비 완료. 다음은 HTTPS 부하.");
 }

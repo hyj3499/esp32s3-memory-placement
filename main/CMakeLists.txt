@@ -1,2 +1,4 @@
 idf_component_register(SRCS "heap_manager.c"
-                    INCLUDE_DIRS ".")
+                            "mem_snapshot.c"
+                            "wifi_conn.c"
+                       INCLUDE_DIRS ".")
