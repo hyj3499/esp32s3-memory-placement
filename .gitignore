@@ -12,3 +12,4 @@ dependencies.lock
 *.map
 ToDoList.txt
 docs/STUDY.md
+log.*.txtlog.*.txt

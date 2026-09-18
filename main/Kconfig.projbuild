@@ -42,4 +42,29 @@ menu "Multi-heap Manager"
         help
             Endpoint requested repeatedly to exercise the TLS stack.
 
+    # 요청 간격. 너무 짧으면 상대 서버에 부담을 주고, 너무 길면 단편화가 쌓이는
+    # 속도를 보기 어렵다. 2초는 관측용으로 잡은 값이고 근거는 없다 — 실측 후 조정한다.
+    config MHM_LOAD_INTERVAL_MS
+        int "Delay between HTTPS requests (ms)"
+        default 2000
+        range 0 600000
+        help
+            Wait this long after each request completes.
+
+    # 요청 횟수를 축으로 한 스냅샷. 0 이면 끈다.
+    config MHM_LOAD_SNAPSHOT_EVERY
+        int "Full heap snapshot every N requests (0 = off)"
+        default 10
+        range 0 1000
+        help
+            Print the 4-region snapshot after every Nth request.
+
+    # 시간축 주기 출력. 부하가 없으면 같은 숫자만 반복해서 찍힌다.
+    config MHM_MONITOR_PERIOD_MS
+        int "Heap monitor period (ms)"
+        default 5000
+        range 100 600000
+        help
+            One-line heap summary printed at this interval.
+
 endmenu
