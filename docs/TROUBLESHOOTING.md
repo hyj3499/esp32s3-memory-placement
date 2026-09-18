@@ -199,3 +199,92 @@ tracing is running"이라고만 적혀 있고, 얼마나 오래 인터럽트를 
 계측 코드가 관측 대상을 오염시키는 문제(Observer Effect)의 또 다른 얼굴이기도 하다.
 이 프로젝트는 계측 태스크를 전부 정적으로 올려 **메모리** 오염을 막았는데, 여기서는
 **시간** 쪽으로 같은 문제가 나왔다.
+
+---
+
+## 4. heap tracing 이 mbedTLS 할당을 한 건도 기록하지 않음
+
+**발생 시점:** Phase 2 (2026-09-19)
+**환경:** ESP-IDF v5.5.5, `CONFIG_HEAP_TRACING_STANDALONE=y`,
+`CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y`
+
+### 증상
+
+첫 TLS 핸드셰이크를 heap tracing 으로 추적했는데 PSRAM 할당이 **0 건**이었다.
+
+```
+probe: alloc=271 free=697 기록=271/1024 최대=271 overflow=아니오
+probe: 합계 내부=52274 PSRAM=0 / 살아있음 내부=572 PSRAM=0
+```
+
+`EXTERNAL` 빌드라 mbedTLS 할당이 전부 PSRAM 으로 가야 하고, `min_free` 로는 실제로
+38,896 바이트가 움직이는 것을 이미 확인한 상태였다. 내부 히스토그램 합
+(182+12+26+22+5+24 = 271)이 `기록=271` 과 정확히 같으므로 **필터로 걸러진 것이 아니라
+애초에 기록이 없었다.**
+
+더 이상했던 것은 내부 쪽 최대 할당이 2,048 바이트 이하뿐이라는 점이다.
+`CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN=16384` 인데 **16 KB 버퍼가 내부에도 PSRAM 에도
+없었다.**
+
+### 원인
+
+heap tracing 은 링커 `--wrap` 으로 네 함수를 가로챈다
+(`components/heap/CMakeLists.txt:60`).
+
+```
+heap_caps_malloc_base
+heap_caps_realloc_base
+heap_caps_aligned_alloc_base
+heap_caps_free
+```
+
+**`--wrap` 은 링크 시점에 해결되는 미정의 참조만 바꾼다.** 같은 오브젝트 파일 안에서
+일어나는 호출은 컴파일 시점에 이미 해결되므로 가로채기를 타지 않는다.
+
+`heap_caps_calloc_base()` 는 `heap_caps_base.c:332` 에서 `heap_caps_malloc_base()` 를
+부른다 — **같은 파일이다.** ELF 디스어셈블이 그대로 보여준다.
+
+```asm
+heap_caps_calloc_base:
+  call8  403767f0 <heap_caps_malloc_base>          ← 맨살
+heap_caps_malloc:                  (heap_caps.c — 다른 파일)
+  call8  403765c4 <__wrap_heap_caps_malloc_base>   ← 가로채짐
+```
+
+그리고 `esp_mbedtls_mem_calloc()`(`mbedtls/port/esp_mem.c:14`)은 `heap_caps_calloc()`
+만 쓴다. **따라서 mbedTLS 의 모든 할당은 배치와 무관하게(INTERNAL 이든 EXTERNAL 이든)
+heap tracing 에 잡히지 않는다.** `INTERNAL` 빌드로 되돌려 확인했을 때도 16 KB 버퍼는
+나타나지 않았다.
+
+맹점의 정확한 범위는 **`heap_caps_calloc()` 과 `heap_caps_calloc_prefer()`** 다.
+`heap_caps_malloc()`, `heap_caps_aligned_alloc()`, newlib `malloc`/`calloc` 은 전부
+다른 파일에서 `..._base` 를 부르므로 정상 추적된다 — 그래서 Wi-Fi, lwIP, AES 기록은
+모두 잡혔다.
+
+### 해결
+
+측정 목적별로 나눠 썼다.
+
+- **mbedTLS 의 총량**은 `min_free` 차분으로 잡는다(38,896). `EXTERNAL` 이 전부
+  통째로 옮기므로 per-allocation 분해가 필요 없다
+- **나머지 전부**는 heap tracing 으로 본다. 표적이던 "내부에 남은 47,039" 는 전부
+  추적 가능한 경로였다
+- 분류 결과를 쓸 때 "내부 소비의 82%" 가 아니라 **"추적된 내부 할당의 82%"** 로
+  적는다
+
+근본 해결이 필요하다면 `CONFIG_MBEDTLS_CUSTOM_MEM_ALLOC` +
+`mbedtls_platform_set_calloc_free()` 로 후킹해 내부에서 `heap_caps_calloc` 대신
+**`heap_caps_malloc`(가로채짐) + `memset`** 을 부르면 된다. 열 줄 남짓이고,
+mbedTLS 할당 전체가 추적 대상이 된다.
+
+### 교훈
+
+**계측 도구의 침묵을 데이터로 읽으면 안 된다.**
+
+`합계 PSRAM=0` 을 "PSRAM 을 안 쓴다" 로 읽었다면 결론 전체가 틀어졌을 것이다. 실제로
+`min_free` 는 38,896 이 움직였다고 말하고 있었다. **두 계측이 어긋날 때는 둘 중
+하나가 틀린 것이고, 어느 쪽인지는 도구를 열어봐야 안다.**
+
+그리고 `--wrap` 의 이 성질은 IDF 만의 문제가 아니다. 링커 수준 가로채기를 쓰는 모든
+계측(`--wrap`, `LD_PRELOAD`)이 **같은 번역 단위 내부 호출과 인라인된 호출을 놓친다.**
+도구가 "무엇을 못 보는지" 를 먼저 확인하는 습관이 필요하다.

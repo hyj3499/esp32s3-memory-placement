@@ -61,7 +61,7 @@ void heap_probe_begin(void)
     ESP_LOGI(TAG, "추적 시작 — 레코드 %d 개 (PSRAM)", CONFIG_MHM_TRACE_RECORDS);
 }
 
-/* 크기 구간. 래퍼의 임계값을 어디에 둘지가 이 표에서 나온다. */
+/* 크기 구간. 어떤 크기대가 어느 리전으로 가는지가 이 표에서 나온다. */
 static const size_t k_bucket_max[] = {
     32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, SIZE_MAX,
 };
@@ -105,11 +105,17 @@ void heap_probe_end(void)
      * 순회하면 critical section 이 레코드 하나 길이로 짧아진다. */
     size_t n = heap_trace_get_count();
 
-    size_t cnt[BUCKETS]   = { 0 };
-    size_t bytes[BUCKETS] = { 0 };
-    size_t total = 0, alive = 0, shown = 0;
+    /* [0] = 내부 SRAM, [1] = PSRAM. 두 쪽을 같이 찍어야 "얼마가 옮겨졌나" 를
+     * 한 번의 부팅으로 볼 수 있다. 내부만 찍으면 사라진 양은 알아도 그것이
+     * 어디로 갔는지, 아니면 애초에 안 잡힌 것인지 구분되지 않는다. */
+    size_t cnt[2][BUCKETS]   = { { 0 } };
+    size_t bytes[2][BUCKETS] = { { 0 } };
+    size_t total[2] = { 0 }, alive[2] = { 0 }, shown[2] = { 0 };
 
-    ESP_LOGI(TAG, "---- 내부 SRAM 할당 (R,idx,size,addr,freed,caller0,caller1) ----");
+    static const char *k_region_name[2] = { "내부 SRAM", "PSRAM" };
+
+    ESP_LOGI(TAG, "---- 할당 덤프 (R,idx,size,addr,I|E,freed,콜스택 %d단) ----",
+             CONFIG_HEAP_TRACING_STACK_DEPTH);
 
     for (size_t i = 0; i < n; i++) {
         heap_trace_record_t r;
@@ -117,19 +123,24 @@ void heap_probe_end(void)
             break;
         }
 
-        /* 표적은 내부 SRAM 이다. PSRAM 으로 간 mbedTLS 몫은 이미 38,896 으로 안다. */
-        if (!esp_ptr_internal(r.address)) {
+        /* 내부도 PSRAM 도 아닌 것(RTC 등)은 이 측정의 관심 밖이다. */
+        int reg;
+        if (esp_ptr_internal(r.address)) {
+            reg = 0;
+        } else if (esp_ptr_external_ram(r.address)) {
+            reg = 1;
+        } else {
             continue;
         }
 
-        size_t b = bucket_of(r.size);
-        cnt[b]++;
-        bytes[b] += r.size;
-        total += r.size;
+        size_t bk = bucket_of(r.size);
+        cnt[reg][bk]++;
+        bytes[reg][bk] += r.size;
+        total[reg] += r.size;
         if (!r.freed) {
-            alive += r.size;
+            alive[reg] += r.size;
         }
-        shown++;
+        shown[reg]++;
 
         /* 콜스택을 전부 찍는다. 깊이 2 로는 [0]=heap_caps_malloc_default,
          * [1]=malloc 처럼 할당기 껍데기만 나와 정작 누가 불렀는지 알 수 없다. */
@@ -140,23 +151,30 @@ void heap_probe_end(void)
                             j ? "," : "", (unsigned)(uintptr_t)r.alloced_by[j]);
         }
 
-        ESP_LOGI(TAG, "R,%u,%u,%p,%d,%s",
-                 (unsigned)i, (unsigned)r.size, r.address, r.freed ? 1 : 0, cs);
+        ESP_LOGI(TAG, "R,%u,%u,%p,%c,%d,%s",
+                 (unsigned)i, (unsigned)r.size, r.address,
+                 reg ? 'E' : 'I', r.freed ? 1 : 0, cs);
     }
 
-    ESP_LOGI(TAG, "---- 크기 분포 (내부 SRAM %u 건) ----", (unsigned)shown);
-    for (size_t i = 0; i < BUCKETS; i++) {
-        if (cnt[i] == 0) {
-            continue;
+    for (int reg = 0; reg < 2; reg++) {
+        ESP_LOGI(TAG, "---- 크기 분포 / %s (%u 건) ----",
+                 k_region_name[reg], (unsigned)shown[reg]);
+        for (size_t i = 0; i < BUCKETS; i++) {
+            if (cnt[reg][i] == 0) {
+                continue;
+            }
+            ESP_LOGI(TAG, "B,%c,<=%u,%u건,%u바이트", reg ? 'E' : 'I',
+                     (unsigned)k_bucket_max[i],
+                     (unsigned)cnt[reg][i], (unsigned)bytes[reg][i]);
         }
-        ESP_LOGI(TAG, "B,<=%u,%u건,%u바이트",
-                 (unsigned)k_bucket_max[i], (unsigned)cnt[i], (unsigned)bytes[i]);
     }
 
     /* total 은 "이 구간에 잡힌 적이 있는 바이트의 합" 이지 동시 피크가 아니다.
-     * 피크(47,039)는 min_free 로만 나온다. 두 숫자는 다른 것을 뜻한다. */
-    ESP_LOGI(TAG, "내부 합계=%u 바이트 / 추적 끝까지 살아있음=%u 바이트",
-             (unsigned)total, (unsigned)alive);
+     * 같은 주소가 재사용되면 중복 계상되므로 피크의 상한으로만 읽는다.
+     * 피크 자체는 min_free 로만 나온다. 두 숫자는 다른 것을 뜻한다. */
+    ESP_LOGI(TAG, "합계 내부=%u PSRAM=%u / 살아있음 내부=%u PSRAM=%u",
+             (unsigned)total[0], (unsigned)total[1],
+             (unsigned)alive[0], (unsigned)alive[1]);
     ESP_LOGI(TAG, "---- 덤프 끝 ----");
 }
 
