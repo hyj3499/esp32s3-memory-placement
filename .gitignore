@@ -1,0 +1,13 @@
+build/
+sdkconfig
+sdkconfig.old
+.vscode/
+.idea/
+managed_components/
+dependencies.lock
+*.o
+*.obj
+*.elf
+*.bin
+*.map
+ToDoList.txt
