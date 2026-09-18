@@ -35,14 +35,23 @@
 
 거창할 필요 없다. 래퍼도 정책도 LVGL도 필요 없다. 숫자만 찍히면 된다.
 
-- [ ] `heap_caps_get_info()`로 SRAM / PSRAM 각각 스냅샷
-- [ ] `free` / `largest_free_block` / `minimum_free_bytes` 를 주기적으로 시리얼 출력
-- [ ] 단편화율 계산 — `1 - largest_free_block / total_free_bytes`
+- [x] `heap_caps_get_info()`로 SRAM / PSRAM 각각 스냅샷 (`mem_snapshot.c`, caps 4종)
+- [x] `free` / `largest_free_block` / `minimum_free_bytes` 를 시리얼 출력
+- [x] 위 출력을 **주기적으로** — `mem_monitor.c`, 5초 주기 한 줄 요약.
+      정적 스택/TCB 로 올려 계측이 힙을 건드리지 않게 했다(대가 14,288 바이트).
+      **한계 확인:** 5초 샘플링은 TLS 피크 78KB 중 38KB 를 놓쳤다. 피크는
+      `min_free` 로만 잡힌다. 수집 주기 일원화는 Phase 3
+- [x] 단편화율 계산 — `1 - largest_free_block / total_free_bytes`
+      ⚠️ 이 공식은 두 가지 이유로 값을 부풀린다(여러 힙 합산, TLSF 크기 클래스
+      내림). 절대값이 아니라 baseline 대비 증가분으로만 읽는다. `STUDY.md §7`
 
 ### Wi-Fi + TLS 부하
 
-- [ ] Wi-Fi 연결
-- [ ] HTTPS 반복 요청 (`esp_http_client`)
+- [x] Wi-Fi 연결 — 단계별 계측 B~E 포함 (`wifi_conn.c`)
+      절전은 `WIFI_PS_NONE`으로 껐다. 약한 링크에서 reason 4로 끊긴다
+- [x] HTTPS 반복 요청 (`esp_http_client`) — `http_load.c`, start/stop API.
+      매 요청 새 연결(`keep_alive_enable = false`)로 핸드셰이크를 반복시킨다.
+      45회 무누수 확인. 상세: `STUDY.md §9`
 - [ ] 이미지 수신 (선택 — 큰 버퍼 할당이 목적)
 
 > ⚠️ **Wi-Fi 비밀번호를 커밋하지 말 것.** 공개 레포라 git 히스토리에 남으면 지우기
@@ -67,8 +76,22 @@ Phase 1의 데이터를 근거로 정책을 정하고, 그걸 코드로 만든�
 
 ### 분석 먼저
 
-- [ ] TLS가 어떤 크기를 얼마나 할당/해제하는가
+- [x] TLS 피크 = **78,347 바이트** (실패 경로 80,723). `min_free` 로만 관측됨
+- [x] 단편화는 **첫 요청에서 전부 발생하고 누적되지 않는다.** largest
+      180,224 → 147,456 (-32,768) 이후 45회까지 평형
+      → 정책은 "재배치" 가 아니라 **"부팅 시 큰 블록 선확보"** 로 간다
+- [ ] **mbedTLS 할당자 정책 전환 측정** ← 최우선 레버.
+      `CONFIG_MBEDTLS_INTERNAL_MEM_ALLOC`(기본) 이 `esp_mem.c:17` 에서
+      `MALLOC_CAP_INTERNAL` 을 명시해 78KB 전부가 내부 SRAM 에 잡힌다.
+      `EXTERNAL` 로 얼마가 옮겨지는지 재고, `CUSTOM` +
+      `mbedtls_platform_set_calloc_free()` 로 크기별 분기를 만든다
+- [ ] TLS가 어떤 크기를 얼마나 할당/해제하는가 (heap tracing 필요)
 - [ ] Wi-Fi 구동 시 SRAM 가용량이 얼마로 떨어지는가
+- [x] **`CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP` A/B 측정** — 빌드 3개로 분해 완료.
+      결과: 켜면 내부 여유가 **오히려 17,868 줄어든다.** 배치 정책과 용량 정책이
+      한 Kconfig 심볼에 묶여 있어(`esp_wifi/Kconfig:82` `depends on`) TX 버퍼가
+      dynamic→static으로 강제 전환되기 때문. 같은 TX 구성끼리 비교하면 PSRAM으로
+      옮겨지는 양은 10,360(13%)뿐. **IDF 기본값을 유지한다.** 상세: `STUDY.md §9`
 - [ ] 단편화율이 어디까지 오르는가 / 시간에 따라 누적되는가
 - [ ] **이 데이터로 임계값 결정** ← 감이 아니라 근거
 
@@ -145,8 +168,7 @@ DMA 플러시 버퍼가 왜 내부 SRAM이어야 하는지
 
 - **정책을 교체 가능하게** 만들어 고정 임계값 방식과 단편화율 기반 적응형 방식을
   같은 부하에서 비교
-- **mbedTLS 할당자 후킹** (`mbedtls_platform_set_calloc_free`) — 단편화의 주원인을
-  정책 통제 범위로 편입
+- ~~**mbedTLS 할당자 후킹**~~ → 실측 78KB 가 나와 Phase 2 본론으로 올렸다
 - **계측 오버헤드 정량화** — 대시보드 on/off로 같은 부하를 돌려 비교
 - **메모리 출처별 분리 계상** — 앱 / 서드파티 / 계측 자신
 
