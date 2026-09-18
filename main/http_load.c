@@ -11,6 +11,7 @@
 #include "esp_timer.h"
 #include "sdkconfig.h"
 
+#include "heap_probe.h"
 #include "http_load.h"
 #include "mem_snapshot.h"
 
@@ -40,7 +41,7 @@ static EventGroupHandle_t s_events;
 static uint32_t s_seq;
 static uint32_t s_fail;
 
-static void one_request(void)
+static void do_request(void)
 {
     esp_http_client_config_t cfg = {
         .url               = CONFIG_MHM_LOAD_URL,
@@ -101,6 +102,23 @@ static void one_request(void)
     ESP_LOGI(TAG, "#%lu status=%d len=%lld body=%d %ldms 실패누적=%lu",
              (unsigned long)s_seq, status, (long long)len, total,
              (long)ms, (unsigned long)s_fail);
+}
+
+/* 추적은 첫 요청 한 번만 건다. 실패 경로로 빠져도 덤프가 나오도록 요청 본체를
+ * do_request() 로 감쌌다. heap_probe_end() 는 추적 중이 아니면 아무 일도 안 한다. */
+static void one_request(void)
+{
+    const bool trace = heap_probe_should_trace(s_seq);
+
+    if (trace) {
+        heap_probe_begin();
+    }
+
+    do_request();
+
+    if (trace) {
+        heap_probe_end();
+    }
 }
 
 static void load_task(void *arg)

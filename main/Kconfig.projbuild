@@ -67,4 +67,30 @@ menu "Multi-heap Manager"
         help
             One-line heap summary printed at this interval.
 
+    # heap tracing 은 차분법이 못 주는 것 — 할당 하나하나의 크기와 호출자 — 을 준다.
+    # 아래 두 항목은 CONFIG_HEAP_TRACING_STANDALONE 이 켜져 있을 때만 뜬다.
+    #
+    # 레코드 버퍼는 PSRAM(EXT_RAM_BSS_ATTR)에 잡는다. 내부 SRAM 에 두면 지금
+    # 재려는 대상을 계측이 밀어낸다. 44바이트 x 1024 = 45,056 바이트(map 실측).
+    config MHM_TRACE_RECORDS
+        int "Heap trace record buffer size (records)"
+        depends on HEAP_TRACING_STANDALONE
+        default 1024
+        range 64 8192
+        help
+            Number of heap_trace_record_t entries. 44 bytes each,
+            allocated in PSRAM. If the summary reports an overflow,
+            raise this value.
+
+    # 첫 핸드셰이크만 추적한다. 45회를 전부 추적하면 레코드가 넘치고,
+    # 단편화는 어차피 첫 요청에서 전부 생긴다(STUDY.md §9).
+    config MHM_TRACE_AT_REQUEST
+        int "Trace the heap during this request number (-1 = off)"
+        depends on HEAP_TRACING_STANDALONE
+        default 0
+        range -1 1000
+        help
+            Zero-based request index to trace. The trace is started just
+            before the request and dumped right after it, once per boot.
+
 endmenu
