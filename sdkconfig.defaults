@@ -1,0 +1,29 @@
+# 이 프로젝트에서 의도적으로 바꾼 설정만 기록한다.
+#
+# sdkconfig는 `idf.py set-target` 실행 시마다 통째로 재생성되는 산출물이라
+# 커밋하지 않는다(.gitignore). 대신 이 파일이 설정의 근거가 되며,
+# sdkconfig가 없거나 날아가면 여기서 다시 채워진다.
+#
+# 규칙: 기본값과 같은 항목은 적지 않는다. 적힌 줄은 전부 "왜 바꿨는지" 설명이 따른다.
+
+# 플래시 4MB
+#   칩 실측값. 기본값은 2MB라 그대로 두면 절반을 못 쓴다.
+#   부팅 로그 경고: "Detected size(4096k) larger than the size in the
+#   binary image header(2048k)"
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+
+# PSRAM 활성화
+#   이 프로젝트의 전제. 480x272x2byte = 약 255KB인 LCD 프레임버퍼는
+#   내부 SRAM(약 390KB)에 둘 수 없다.
+CONFIG_SPIRAM=y
+
+# PSRAM 라인 모드 = Octal
+#   보드 탑재 칩이 8MB Octal(AP_3v3). Quad로 두면 부팅이 무한 재부팅에 빠진다.
+#   상세: docs/TROUBLESHOOTING.md #1
+CONFIG_SPIRAM_MODE_OCT=y
+
+# 아래는 기본값이라 적지 않았다. 나중에 바꿀 일이 생기면 그때 이유와 함께 추가한다.
+#   CONFIG_SPIRAM_SPEED_40M        기본값. Octal은 80MHz도 선택 가능
+#   CONFIG_SPIRAM_MEMTEST=y        기본값. 부팅 시 PSRAM 검사
+#   CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=32768
+#   CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384

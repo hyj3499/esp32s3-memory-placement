@@ -11,3 +11,4 @@ dependencies.lock
 *.bin
 *.map
 ToDoList.txt
+docs/STUDY.md
