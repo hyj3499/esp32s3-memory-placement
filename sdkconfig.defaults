@@ -80,3 +80,10 @@ CONFIG_HEAP_TRACING_STACK_DEPTH=6
 #   나간다. 즉 이 줄을 켜는 순간 A 지점 baseline 이 Phase 2 와 달라진다.
 #   켜기 직전/직후를 한 번씩 재서 증가분을 바이트로 확정할 것.
 CONFIG_FREERTOS_USE_TRACE_FACILITY=y
+
+# esp_timer 태스크 스택 3584 -> 2048
+#   Phase 3 워터마크 실측: 부하 중 사용량이 484 바이트(14%)로, 3,100 이 놀고 있었다.
+#   Kconfig 의 range 최소값이 2048 이라 더 내릴 수 없다(esp_timer/Kconfig:28).
+#   남는 마진 1,564 = 관측 사용량의 4.2 배.
+#   이 스택은 xTaskCreate 경로라 힙에서 나온다 -> 회수분이 내부 SRAM 여유로 돌아온다.
+CONFIG_ESP_TIMER_TASK_STACK_SIZE=2048
