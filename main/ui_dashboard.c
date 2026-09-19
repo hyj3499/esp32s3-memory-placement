@@ -120,6 +120,13 @@ esp_err_t ui_dashboard_create(void)
     lv_obj_t *cap = make_label(left, 0, 0, 0x58a6ff);
     lv_label_set_text(cap, "INTERNAL SRAM");
 
+    /* 패널 안쪽 높이는 MID_H(118) - pad*2 = 110px 다. montserrat_14 한 줄이
+     * 17px 이므로 캡션 17 + 본문 3줄 51 + 막대 2개 20 + 아래 한 줄 17 = 105 로
+     * 겨우 들어간다.
+     *
+     * 처음에는 본문을 4줄(free/largest/min_free/frag)로 잡았는데, 그러면 본문이
+     * y=18~86 을 쓰고 막대가 y=70/82 에 놓여 **frag 줄을 덮는다.** 실기에서
+     * 그렇게 나왔다. frag 는 아래 PSRAM 줄로 합쳐 내렸다. */
     s_lbl_int = make_label(left, 0, 18, 0xc9d1d9);
 
     s_bar_free = lv_bar_create(left);
@@ -128,11 +135,11 @@ esp_err_t ui_dashboard_create(void)
     style_bar(s_bar_free, 0x3fb950);
 
     s_bar_largest = lv_bar_create(left);
-    lv_obj_set_pos(s_bar_largest, 0, 82);
+    lv_obj_set_pos(s_bar_largest, 0, 80);
     lv_obj_set_size(s_bar_largest, LEFT_W - 16, 8);
     style_bar(s_bar_largest, 0xd29922);
 
-    s_lbl_psram = make_label(left, 0, 94, 0x8b949e);
+    s_lbl_psram = make_label(left, 0, 90, 0x8b949e);
 
     /* ---- 오른쪽: 시계열 ----
      *
@@ -155,7 +162,16 @@ esp_err_t ui_dashboard_create(void)
     lv_obj_set_style_bg_color(s_chart, lv_color_hex(0x0d1117), 0);
     lv_obj_set_style_border_width(s_chart, 0, 0);
     lv_obj_set_style_line_color(s_chart, lv_color_hex(0x30363d), LV_PART_MAIN);
-    lv_obj_set_style_size(s_chart, 0, 0, LV_PART_INDICATOR);  /* 점 표시 끔 */
+    /* 점 마커 끄기.
+     *
+     * 크기를 0 으로 주는 것으로는 안 꺼진다. `lv_chart.c:1238` 이
+     * `point_w = lv_obj_get_style_width(obj, LV_PART_INDICATOR) / 2` 로 반지름을
+     * 잡으므로 0 이면 반지름 0, 즉 **1픽셀 사각형**이 점마다 그대로 찍힌다.
+     * 게다가 LV_PART_INDICATOR 의 기본 배경색이 흰색이라 어두운 차트 위에
+     * 흰 점이 흩뿌려진 것처럼 보인다. 실기에서 그렇게 나왔다.
+     * 크기가 아니라 **불투명도**로 꺼야 한다. */
+    lv_obj_set_style_bg_opa(s_chart, LV_OPA_TRANSP, LV_PART_INDICATOR);
+    lv_obj_set_style_size(s_chart, 0, 0, LV_PART_INDICATOR);
 
     s_ser_free = lv_chart_add_series(s_chart, lv_color_hex(0x3fb950),
                                      LV_CHART_AXIS_PRIMARY_Y);
@@ -200,13 +216,13 @@ void ui_dashboard_push_heap(const mem_stats_t *s, uint32_t uptime_sec)
     snprintf(buf, sizeof(buf),
              "free     %7u\n"
              "largest  %7u\n"
-             "min_free %7u\n"
-             "frag     %6u%%",
+             "min_free %7u",
              (unsigned)s->internal_free, (unsigned)s->internal_largest,
-             (unsigned)s->internal_min_free, s->internal_frag);
+             (unsigned)s->internal_min_free);
     lv_label_set_text(s_lbl_int, buf);
 
-    snprintf(buf, sizeof(buf), "PSRAM free %u", (unsigned)s->psram_free);
+    snprintf(buf, sizeof(buf), "frag %u%%   PSRAM %u",
+             s->internal_frag, (unsigned)s->psram_free);
     lv_label_set_text(s_lbl_psram, buf);
 
     lv_bar_set_value(s_bar_free,
