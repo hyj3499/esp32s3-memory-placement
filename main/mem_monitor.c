@@ -9,6 +9,7 @@
 
 #include "mem_monitor.h"
 #include "mem_snapshot.h"
+#include "task_stats.h"
 
 static const char *TAG = "monitor";
 
@@ -36,11 +37,24 @@ static void monitor_task(void *arg)
         /* 부동소수 포맷(%f)을 피한다. nano formatting 설정에 따라 안 찍힐 수 있다. */
         uint32_t sec = (uint32_t)((esp_timer_get_time() - t0) / 1000000);
 
+        const uint32_t n = seq++;
+
         char label[24];
         snprintf(label, sizeof(label), "#%lu t=%lus",
-                 (unsigned long)seq++, (unsigned long)sec);
+                 (unsigned long)n, (unsigned long)sec);
 
         mem_snapshot_log_line(label);
+
+        /* 수집 주기를 여기로 일원화한다. 태스크를 하나 더 띄우면 그 스택과 TCB 가
+         * 또 관측 대상이 되고, 두 계측이 서로의 출력 사이에 끼어든다.
+         * 스택 표는 힙 줄보다 훨씬 길어서 매번 찍으면 시계열이 묻힌다. 워터마크는
+         * 누적 최저치라 자주 찍어도 새로 얻는 값이 없다. */
+#if CONFIG_MHM_TASK_STATS_EVERY > 0
+        if (n % CONFIG_MHM_TASK_STATS_EVERY == 0) {
+            task_stats_log(label);
+        }
+#endif
+
         vTaskDelay(pdMS_TO_TICKS(CONFIG_MHM_MONITOR_PERIOD_MS));
     }
 }

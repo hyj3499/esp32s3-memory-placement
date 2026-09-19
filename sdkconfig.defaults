@@ -67,3 +67,16 @@ CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y
 #   [1]=malloc 으로 두 칸이 전부 할당기 껍데기에 먹힌다. 실제 호출자는 [2] 부터다.
 #   대가: 레코드가 44 -> 76 바이트 (PSRAM 이므로 내부 SRAM 에 영향 없음).
 CONFIG_HEAP_TRACING_STACK_DEPTH=6
+
+# FreeRTOS 트레이스 기능
+#   uxTaskGetSystemState() 가 이 심볼에 걸려 있다(tasks.c:2970 의 #if 블록).
+#   꺼져 있으면 함수 자체가 컴파일되지 않아 링크 에러가 난다.
+#   워터마크 값만 보려면 필요 없다 — uxTaskGetStackHighWaterMark() 는
+#   INCLUDE_ 매크로가 항상 1 이라 그냥 된다(FreeRTOSConfig.h:219). 이 심볼이
+#   주는 것은 "핸들을 모르는 남의 태스크까지 한 번에 훑는 능력" 이다.
+#   Phase 2 에서 내부 SRAM 을 먹는 것의 82% 가 Wi-Fi/lwIP 였으므로 정작
+#   보고 싶은 것이 남의 태스크다.
+#   ⚠️ 대가: TCB 에 uxTCBNumber/uxTaskNumber 가 붙어 태스크마다 힙이 조금 더
+#   나간다. 즉 이 줄을 켜는 순간 A 지점 baseline 이 Phase 2 와 달라진다.
+#   켜기 직전/직후를 한 번씩 재서 증가분을 바이트로 확정할 것.
+CONFIG_FREERTOS_USE_TRACE_FACILITY=y

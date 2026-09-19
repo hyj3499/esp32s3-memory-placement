@@ -93,4 +93,30 @@ menu "Multi-heap Manager"
             Zero-based request index to trace. The trace is started just
             before the request and dumped right after it, once per boot.
 
+    # 스택 워터마크 수집용 정적 배열의 칸 수.
+    #
+    # uxTaskGetSystemState() 는 배열이 태스크 수보다 작으면 아무것도 쓰지 않고
+    # 0 을 반환한다 — 에러가 아니라 침묵이다. 부족하면 로그가 그냥 비어 보인다.
+    # 여유를 두되, TaskStatus_t x 이 값만큼 .bss 를 먹는다는 것도 기억할 것.
+    # 실제 태스크 수는 uxTaskGetNumberOfTasks() 로 로그에 찍힌다.
+    config MHM_MAX_TASKS
+        int "Max tasks captured by the stack watermark snapshot"
+        depends on FREERTOS_USE_TRACE_FACILITY
+        default 24
+        range 4 64
+        help
+            Size of the static TaskStatus_t array. If the snapshot reports
+            that the buffer was too small, raise this.
+
+    # 스택 표는 태스크 수만큼 줄이 나온다. 매 주기 찍으면 힙 시계열이 묻힌다.
+    # 워터마크는 누적 최저치라 자주 찍어서 얻는 것도 없다 — 놓치는 값이 없다.
+    config MHM_TASK_STATS_EVERY
+        int "Print the stack table every N monitor periods (0 = off)"
+        depends on FREERTOS_USE_TRACE_FACILITY
+        default 6
+        range 0 1000
+        help
+            The monitor task prints the per-task stack watermark table
+            once every N heap lines.
+
 endmenu

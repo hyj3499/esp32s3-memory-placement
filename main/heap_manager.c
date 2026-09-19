@@ -4,6 +4,7 @@
 #include "http_load.h"
 #include "mem_monitor.h"
 #include "mem_snapshot.h"
+#include "task_stats.h"
 #include "wifi_conn.h"
 
 static const char *TAG = "app";
@@ -12,6 +13,10 @@ void app_main(void)
 {
     /* 측정 지점 B~E 는 각 단계 안쪽에 있어야 의미가 있어 해당 모듈이 직접 찍는다. */
     mem_snapshot_log("A: 부팅 직후 baseline");
+
+    /* 계측의 정적 비용을 A 지점 옆에 남긴다. 나중에 힙 숫자가 흔들렸을 때
+     * "계측이 먹은 것" 과 "관측 대상이 먹은 것" 을 분리하려면 이 줄이 필요하다. */
+    task_stats_log_cost();
 
     esp_err_t err = wifi_conn_start();
     if (err != ESP_OK) {
