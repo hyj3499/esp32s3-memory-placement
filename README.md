@@ -188,6 +188,28 @@ tiT가 1,844 → 1,604으로 **줄어드는** 것이 관측됐다. 0xa5 패턴�
 쪽이 이긴다. 감지를 시점에 의존하지 않게 하려면 하드웨어 워치포인트
 (`CONFIG_FREERTOS_WATCHPOINT_END_OF_STACK`)가 필요하다 — 쓰는 순간 트랩한다.
 
+**⑩ `idf.py size`의 "IRAM 100%"는 링커의 제약이 아니다.**
+`IRAM 16,384 / 16,384 (100.0%)`를 보고 "`IRAM_ATTR`가 늘면 링크 에러"라고 적어
+뒀는데, 맵을 열어 보니 링커가 보는 영역은 하나뿐이었다 —
+`iram0_0_seg len=0x57700`(358,144) 중 `0x18700`(100,096) 사용, **258,048 여유.**
+판정식도 맵에 그대로 있다: `ASSERT((_iram_end - ORIGIN(iram0_0_seg)) <= LENGTH(...))`.
+툴이 100%라고 한 16KB는 SRAM0 구간이고 이미 넘쳐서 83,712바이트가 DIRAM으로
+들어가 있었다. **진짜 대가는 링크 에러가 아니라 힙이다** — 넘친 만큼
+`.dram0.dummy`가 데이터 주소를 예약해 `_heap_start`를 그대로 밀어낸다.
+LVGL을 얹어 검증했더니 dummy가 10,496 늘고 힙 시작이 `.data`(+496)와
+`.bss`(+7,432)를 더한 **18,424만큼 정확히** 밀렸다. 조용히 줄기 때문에 링크
+에러보다 나쁘다. 볼 숫자는 `IRAM %`가 아니라 맵의 `.dram0.dummy`다.
+
+**⑪ 빈 Kconfig 문자열 하나가 348KB를 지운다.**
+대시보드를 붙였는데 바이너리가 **줄었다**(0xef010 → 0xe1510). `wifi_conn_start()`를
+디스어셈블했더니 로그 한 줄 찍고 `0x102`를 반환하는 스텁이었다 —
+`strlen(CONFIG_MHM_WIFI_SSID) == 0`이 컴파일 타임 상수라 그 아래가 전부 죽은
+코드가 되고, `libesp_wifi`/`libnet80211`/`libpp`가 한 심볼도 안 딸려 온다.
+ELF에 `esp_wifi_init` 자체가 없었다. **③의 정확한 반대다** — ③은 Kconfig 한 줄이
+크기를 안 바꾼 사례였고 이건 문자열이 비었다는 이유만으로 348,288바이트가
+사라진 사례다. 둘의 교훈은 같다: **Kconfig 변경의 크기 영향은 심볼 이름으로
+짐작할 수 없고 빌드해서 재야 한다.**
+
 ---
 
 ## 계측 하네스 — 관측자 효과를 피하는 설계
@@ -240,9 +262,16 @@ main/
   http_load.c/h      HTTPS 반복 요청. 요청 N회마다 스냅샷 (요청축)
   heap_probe.c/h     heap tracing 래퍼. 첫 핸드셰이크만 추적 + 크기 분포
   task_stats.c/h     태스크 스택 워터마크 (정적 배열) + 오버플로우 훅
+  mem_place.c/h      배치 래퍼. 의도(DMA/BULK/HOT) → 리전. DMA 는 폴백하지 않는다
+  lcd_nv3041a.c/h    NV3041A QSPI 패널 드라이버 (직접 작성, 레지스트리에 QSPI 판 없음)
+  lcd_board.c/h      이 보드의 결선 — QSPI 핀·클럭·백라이트
+  lvgl_port.c/h      LVGL 글루. 드로우 버퍼는 mem_place 를 거친다
+  ui_dashboard.c/h   화면 4영역. 숫자를 만들지 않고 받아서 그린다
 ```
 
-외부 컴포넌트 의존 없음. 설정은 `menuconfig`의 `Multi-heap Manager` 메뉴,
+외부 컴포넌트 의존: `lvgl/lvgl` 하나.
+`esp_lvgl_port` 는 쓰지 않는다 — 드로우 버퍼를 자기가 잡아 버려서 배치 검증
+대상이 사라진다. 설정은 `menuconfig`의 `Multi-heap Manager` 메뉴,
 변경 근거는 `sdkconfig.defaults`에 주석으로 남긴다.
 
 ## 문서
