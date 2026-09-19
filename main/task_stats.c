@@ -1,3 +1,5 @@
+#include <string.h>
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -98,6 +100,33 @@ void task_stats_log(const char *label)
     }
 }
 
+
+size_t task_stats_snapshot(task_stack_row_t *rows, size_t max_rows, uint32_t *us_out)
+{
+    const int64_t t0 = esp_timer_get_time();
+    const UBaseType_t n = uxTaskGetSystemState(s_status, CONFIG_MHM_MAX_TASKS, NULL);
+    const int64_t us = esp_timer_get_time() - t0;
+
+    if (us_out) {
+        *us_out = (uint32_t)us;
+    }
+    if (n == 0) {
+        return 0;
+    }
+
+    sort_by_headroom(s_status, n);
+
+    size_t out = 0;
+    for (UBaseType_t i = 0; i < n && out < max_rows; i++, out++) {
+        /* 이름을 복사한다. pcTaskName 은 TCB 안을 가리키므로 태스크가 죽으면
+         * 화면이 죽은 메모리를 읽게 된다. */
+        strncpy(rows[out].name, s_status[i].pcTaskName, sizeof(rows[out].name) - 1);
+        rows[out].name[sizeof(rows[out].name) - 1] = 0;
+        rows[out].headroom = (uint32_t)s_status[i].usStackHighWaterMark;
+    }
+    return out;
+}
+
 #else  /* CONFIG_FREERTOS_USE_TRACE_FACILITY */
 
 void task_stats_log_cost(void)
@@ -108,6 +137,17 @@ void task_stats_log_cost(void)
 void task_stats_log(const char *label)
 {
     (void)label;
+}
+
+
+size_t task_stats_snapshot(task_stack_row_t *rows, size_t max_rows, uint32_t *us_out)
+{
+    (void)rows;
+    (void)max_rows;
+    if (us_out) {
+        *us_out = 0;
+    }
+    return 0;
 }
 
 #endif /* CONFIG_FREERTOS_USE_TRACE_FACILITY */

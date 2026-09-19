@@ -87,3 +87,10 @@ CONFIG_FREERTOS_USE_TRACE_FACILITY=y
 #   남는 마진 1,564 = 관측 사용량의 4.2 배.
 #   이 스택은 xTaskCreate 경로라 힙에서 나온다 -> 회수분이 내부 SRAM 여유로 돌아온다.
 CONFIG_ESP_TIMER_TASK_STACK_SIZE=2048
+
+# --- Phase 4: LCD 대시보드 ---
+# LVGL 이 자기 정적 풀(LV_MEM_SIZE 기본 64KB)을 쓰지 않게 한다. 그 풀은
+# 내부 SRAM 을 통째로 예약해 놓고 우리 계측에는 "할당된 한 덩어리"로만
+# 보인다 — 이 프로젝트가 보려는 것이 바로 그 안쪽이다. CLIB 로 두면 LVGL
+# 할당이 heap_caps 를 타므로 mem_snapshot 과 heap tracing 에 잡힌다.
+CONFIG_LV_USE_CLIB_MALLOC=y

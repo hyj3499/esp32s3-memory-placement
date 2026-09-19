@@ -48,20 +48,32 @@ void mem_snapshot_log(const char *label)
     }
 }
 
-void mem_snapshot_log_line(const char *label)
+void mem_snapshot_log_line(const char *label, const mem_stats_t *s)
+{
+    /* min_free 를 같이 찍는 이유: 이 출력은 샘플링이라 두 줄 사이에서 일어난
+     * 순간적인 저점을 놓친다. min_free 는 그 저점을 힙이 기억해 준 값이다. */
+    ESP_LOGI(TAG, "%-12s INT free=%zu largest=%zu min=%zu frag=%u%% | PSRAM free=%zu",
+             label,
+             s->internal_free,
+             s->internal_largest,
+             s->internal_min_free,
+             s->internal_frag,
+             s->psram_free);
+}
+
+void mem_snapshot_get(mem_stats_t *out)
 {
     multi_heap_info_t in, ex;
 
     heap_caps_get_info(&in, MALLOC_CAP_INTERNAL);
     heap_caps_get_info(&ex, MALLOC_CAP_SPIRAM);
 
-    /* min_free 를 같이 찍는 이유: 이 출력은 샘플링이라 두 줄 사이에서 일어난
-     * 순간적인 저점을 놓친다. min_free 는 그 저점을 힙이 기억해 준 값이다. */
-    ESP_LOGI(TAG, "%-12s INT free=%zu largest=%zu min=%zu frag=%u%% | PSRAM free=%zu",
-             label,
-             in.total_free_bytes,
-             in.largest_free_block,
-             in.minimum_free_bytes,
-             frag_percent(&in),
-             ex.total_free_bytes);
+    out->internal_free     = in.total_free_bytes;
+    out->internal_largest  = in.largest_free_block;
+    out->internal_min_free = in.minimum_free_bytes;
+    out->internal_alloc    = in.total_allocated_bytes;
+    out->internal_frag     = frag_percent(&in);
+    out->psram_free        = ex.total_free_bytes;
+    out->psram_largest     = ex.largest_free_block;
+    out->psram_alloc       = ex.total_allocated_bytes;
 }

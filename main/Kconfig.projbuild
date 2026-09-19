@@ -119,4 +119,54 @@ menu "Multi-heap Manager"
             The monitor task prints the per-task stack watermark table
             once every N heap lines.
 
+    # ---------------- Phase 4: LCD 대시보드 ----------------
+
+    # 벤더 데모(Arduino_ESP32QSPI.h:9)는 80MHz 로 돌린다. 여기서 40 을 기본으로
+    # 두는 것은 첫 점등 때문이다 — 화면이 안 나올 때 "로직이 틀렸나 신호가
+    # 죽었나" 를 가르려면 느린 쪽에서 시작하는 편이 낫다. 뜨고 나서 올린다.
+    config MHM_LCD_PCLK_MHZ
+        int "LCD QSPI clock (MHz)"
+        default 40
+        range 4 80
+        help
+            Vendor demo runs at 80 MHz. Start lower for first bring-up.
+
+    # 이 프로젝트에서 가장 설계다운 결정. 드로우 버퍼는 DMA 가 직접 읽으므로
+    # 내부 SRAM 이 물리적 강제이고, 내부 SRAM 은 이 프로젝트가 아끼려는 바로
+    # 그 자원이다. 즉 대시보드를 키우면 관측 대상이 줄어든다.
+    #
+    # 480 x N x 2 바이트. 부하 중 내부 연속 블록 실측이 188,416 이므로
+    # 20줄(19,200) x 2버퍼 = 38,400 은 그 20% 다.
+    config MHM_LCD_BUF_LINES
+        int "LVGL draw buffer height (lines)"
+        default 20
+        range 4 272
+        help
+            Buffer is 480 * lines * 2 bytes, allocated in internal SRAM
+            because DMA cannot reach PSRAM. Two of them if double
+            buffering is enabled.
+
+    config MHM_LCD_DOUBLE_BUFFER
+        bool "Allocate two draw buffers"
+        default y
+        help
+            Lets LVGL render the next chunk while DMA ships the previous
+            one. Costs one more buffer of internal SRAM.
+
+    config MHM_LCD_BACKLIGHT_PCT
+        int "Backlight duty (%)"
+        default 80
+        range 0 100
+
+    # 화면 갱신 주기. 계측 주기(MHM_MONITOR_PERIOD_MS)와 별개다 — 화면은
+    # 자주 갱신해도 되지만 heap_caps_get_info() 는 O(n) 이라 값이 비싸다.
+    # 그래서 UI 는 캐시된 스냅샷을 읽고, 수집은 모니터 태스크가 한다.
+    config MHM_UI_PERIOD_MS
+        int "Dashboard refresh period (ms)"
+        default 500
+        range 50 10000
+        help
+            LVGL redraw interval. The numbers themselves are collected by
+            the monitor task at MHM_MONITOR_PERIOD_MS.
+
 endmenu

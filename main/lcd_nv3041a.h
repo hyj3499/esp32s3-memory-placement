@@ -25,6 +25,9 @@ extern "C" {
 #define NV3041A_H_RES 480
 #define NV3041A_V_RES 272
 
+/* 리셋 후 대기. 벤더 헤더의 NV3041A_RST_DELAY (`Arduino_NV3041A.h:10`). */
+#define NV3041A_RESET_DELAY_MS 120
+
 /* 패널 핸들 생성. io 는 반드시 quad_mode 로 만든 SPI 패널 IO 여야 한다.
  *
  * panel_dev_config 에서 이 드라이버가 보는 것:

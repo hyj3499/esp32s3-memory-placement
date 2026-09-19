@@ -1,7 +1,8 @@
-/* NV3041A (480x272, QSPI) 패널 드라이버 — 골격.
+/* NV3041A (480x272, QSPI) 패널 드라이버.
  *
- * 채워야 할 곳은 TODO 로 표시했다. 나머지(구조체 배선, 팩토리, vtable 연결)는
- * st7789 등 IDF 내장 드라이버와 같은 형태다. */
+ * IDF 내장 드라이버가 아니고 컴포넌트 레지스트리에도 QSPI 판이 없다
+ * (`eric-c-e/esp_lcd_nv3041` 은 4-wire SPI 전용). 그래서 직접 썼다.
+ * 구조는 IDF 내장 st7789 와 같고, 다른 것은 프레이밍과 초기화 테이블뿐이다. */
 
 #include <stdlib.h>
 #include <string.h>
@@ -41,15 +42,28 @@ static const char *TAG = "nv3041a";
 #define NV3041A_CMD(c)      (((uint32_t)0x02 << 24) | ((uint32_t)((c) & 0xff) << 8))
 #define NV3041A_COLOR_CMD   (((uint32_t)0x32 << 24) | 0x003C00u)
 
+/* MADCTL(0x36) 비트. `Arduino_NV3041A.h:32-36`.
+ * BGR 비트는 벤더 헤더에 없어 esp_lcd 의 표준 정의(LCD_CMD_BGR_BIT, 0x08)를 쓴다. */
+#define NV3041A_MADCTL_MY   0x80
+#define NV3041A_MADCTL_MX   0x40
+#define NV3041A_MADCTL_MV   0x20
+
+/* 이 패널의 네이티브 방향(480x272 가로)에서의 MADCTL 기본값.
+ * `Arduino_NV3041A.cpp:41` 의 rotation 0 경로가 MX|MY 다. */
+#define NV3041A_MADCTL_BASE (NV3041A_MADCTL_MX | NV3041A_MADCTL_MY)
+
 /* ====================== 초기화 커맨드 테이블 ======================
  *
  * 출처: 보드 동봉 `latest initialization_4031A-01配IPS.docx`
- *       (`4-Driver_IC_Data_Sheet/4031A-01配IPS.docx` 도 같은 내용)
+ *       (= `4-Driver_IC_Data_Sheet/4031A-01配IPS.docx`). 손으로 옮기지 않고
+ *       docx 를 파싱해 생성했다.
  *
- * 벤더 시퀀스는 `Write_Comm(c); Write_Data(d);` 96쌍이고 **파라미터가 전부
- * 1바이트**라 아래 구조체로 충분하다. 마지막 두 줄만 예외다 —
- * `Write_Comm(0x11)` 뒤에 `Delay_ms(120)`, 그리고 `Write_Comm(0x29)` 는
- * 파라미터가 없다. 그래서 `has_data` / `delay_ms` 가 필요하다. */
+ * `Write_Comm(c); Write_Data(d);` 96쌍이고 파라미터가 전부 1바이트다.
+ * 예외는 둘뿐 — `0x11`(SLPOUT) 뒤에 120ms 대기, `0x29`(DISPON) 는 파라미터 없음.
+ *
+ * ⚠️ `0x3A` 는 표준 MIPI COLMOD 인코딩이 아니다. 벤더 init 배열의 주석이
+ * `01---565, 00---666` 이라고 적고 있다. st7789 처럼 0x55 를 넣으면 안 된다.
+ * 그래서 이 드라이버는 COLMOD 를 계산하지 않고 테이블 값을 그대로 쓴다. */
 typedef struct {
     uint8_t cmd;
     uint8_t data;
@@ -58,8 +72,102 @@ typedef struct {
 } nv3041a_init_cmd_t;
 
 static const nv3041a_init_cmd_t s_init_cmds[] = {
-    /* TODO(나): docx 의 96쌍을 옮긴다. 첫 줄은 0xff/0xa5 (커맨드 페이지 언락),
-     *           마지막은 {0x11, .delay_ms=120} 과 {0x29} 다. */
+    { 0xff, 0xa5, true,    0 },
+    { 0xe7, 0x10, true,    0 },
+    { 0x35, 0x01, true,    0 },
+    { 0x3a, 0x01, true,    0 },
+    { 0x40, 0x01, true,    0 },
+    { 0x41, 0x03, true,    0 },
+    { 0x44, 0x15, true,    0 },
+    { 0x45, 0x15, true,    0 },
+    { 0x7d, 0x03, true,    0 },
+    { 0xc1, 0xab, true,    0 },
+    { 0xc2, 0x17, true,    0 },
+    { 0xc3, 0x10, true,    0 },
+    { 0xc6, 0x3a, true,    0 },
+    { 0xc7, 0x25, true,    0 },
+    { 0xc8, 0x11, true,    0 },
+    { 0x6f, 0x2f, true,    0 },
+    { 0x78, 0x4b, true,    0 },
+    { 0x7a, 0x49, true,    0 },
+    { 0xc9, 0x00, true,    0 },
+    { 0x51, 0x20, true,    0 },
+    { 0x52, 0x7c, true,    0 },
+    { 0x53, 0x1c, true,    0 },
+    { 0x54, 0x77, true,    0 },
+    { 0x46, 0x0a, true,    0 },
+    { 0x47, 0x2a, true,    0 },
+    { 0x48, 0x0a, true,    0 },
+    { 0x49, 0x1a, true,    0 },
+    { 0x56, 0x43, true,    0 },
+    { 0x57, 0x42, true,    0 },
+    { 0x58, 0x3c, true,    0 },
+    { 0x59, 0x64, true,    0 },
+    { 0x5a, 0x41, true,    0 },
+    { 0x5b, 0x3c, true,    0 },
+    { 0x5c, 0x02, true,    0 },
+    { 0x5d, 0x3c, true,    0 },
+    { 0x5e, 0x1f, true,    0 },
+    { 0x60, 0x80, true,    0 },
+    { 0x61, 0x3f, true,    0 },
+    { 0x62, 0x21, true,    0 },
+    { 0x63, 0x07, true,    0 },
+    { 0x64, 0xe0, true,    0 },
+    { 0x65, 0x01, true,    0 },
+    { 0xca, 0x20, true,    0 },
+    { 0xcb, 0x52, true,    0 },
+    { 0xcc, 0x10, true,    0 },
+    { 0xcd, 0x42, true,    0 },
+    { 0xd0, 0x20, true,    0 },
+    { 0xd1, 0x52, true,    0 },
+    { 0xd2, 0x10, true,    0 },
+    { 0xd3, 0x42, true,    0 },
+    { 0xd4, 0x0a, true,    0 },
+    { 0xd5, 0x32, true,    0 },
+    { 0xe5, 0x05, true,    0 },
+    { 0xe6, 0x00, true,    0 },
+    { 0x6e, 0x14, true,    0 },
+    { 0x80, 0x04, true,    0 },
+    { 0xa0, 0x00, true,    0 },
+    { 0x81, 0x07, true,    0 },
+    { 0xa1, 0x05, true,    0 },
+    { 0x82, 0x06, true,    0 },
+    { 0xa2, 0x04, true,    0 },
+    { 0x83, 0x39, true,    0 },
+    { 0xa3, 0x39, true,    0 },
+    { 0x84, 0x3a, true,    0 },
+    { 0xa4, 0x3a, true,    0 },
+    { 0x85, 0x3f, true,    0 },
+    { 0xa5, 0x3f, true,    0 },
+    { 0x86, 0x2c, true,    0 },
+    { 0xa6, 0x2a, true,    0 },
+    { 0x87, 0x43, true,    0 },
+    { 0xa7, 0x47, true,    0 },
+    { 0x88, 0x08, true,    0 },
+    { 0xa8, 0x08, true,    0 },
+    { 0x89, 0x0f, true,    0 },
+    { 0xa9, 0x0f, true,    0 },
+    { 0x8a, 0x17, true,    0 },
+    { 0xaa, 0x17, true,    0 },
+    { 0x8b, 0x10, true,    0 },
+    { 0xab, 0x10, true,    0 },
+    { 0x8c, 0x16, true,    0 },
+    { 0xac, 0x16, true,    0 },
+    { 0x8d, 0x14, true,    0 },
+    { 0xad, 0x14, true,    0 },
+    { 0x8e, 0x11, true,    0 },
+    { 0xae, 0x11, true,    0 },
+    { 0x8f, 0x14, true,    0 },
+    { 0xaf, 0x14, true,    0 },
+    { 0x90, 0x06, true,    0 },
+    { 0xb0, 0x06, true,    0 },
+    { 0x91, 0x0f, true,    0 },
+    { 0xb1, 0x0f, true,    0 },
+    { 0x92, 0x16, true,    0 },
+    { 0xb2, 0x16, true,    0 },
+    { 0xff, 0x00, true,    0 },
+    { 0x11, 0x00, false, 120 },
+    { 0x29, 0x00, false,   0 },
 };
 
 typedef struct {
@@ -69,8 +177,9 @@ typedef struct {
     bool reset_level;
     int x_gap;
     int y_gap;
-    uint8_t madctl_val;
-    uint8_t colmod_val;
+    uint8_t madctl_val;   /* MADCTL 은 읽을 수 없다. mirror 와 swap_xy 가 같은
+                           * 레지스터를 나눠 쓰므로 마지막 값을 들고 있어야 한다. */
+    bool invert_on;
 } nv3041a_panel_t;
 
 static esp_err_t panel_nv3041a_del(esp_lcd_panel_t *panel);
@@ -84,6 +193,17 @@ static esp_err_t panel_nv3041a_swap_xy(esp_lcd_panel_t *panel, bool swap_axes);
 static esp_err_t panel_nv3041a_set_gap(esp_lcd_panel_t *panel, int x_gap, int y_gap);
 static esp_err_t panel_nv3041a_disp_on_off(esp_lcd_panel_t *panel, bool on_off);
 
+/* 파라미터 없는 커맨드 한 발. */
+static esp_err_t tx_cmd(nv3041a_panel_t *p, uint8_t cmd)
+{
+    return esp_lcd_panel_io_tx_param(p->io, NV3041A_CMD(cmd), NULL, 0);
+}
+
+static esp_err_t tx_cmd8(nv3041a_panel_t *p, uint8_t cmd, uint8_t data)
+{
+    return esp_lcd_panel_io_tx_param(p->io, NV3041A_CMD(cmd), &data, 1);
+}
+
 esp_err_t esp_lcd_new_panel_nv3041a(esp_lcd_panel_io_handle_t io,
                                     const esp_lcd_panel_dev_config_t *panel_dev_config,
                                     esp_lcd_panel_handle_t *ret_panel)
@@ -93,9 +213,10 @@ esp_err_t esp_lcd_new_panel_nv3041a(esp_lcd_panel_io_handle_t io,
 
     ESP_RETURN_ON_FALSE(io && panel_dev_config && ret_panel, ESP_ERR_INVALID_ARG, TAG,
                         "invalid argument");
+    /* COLMOD 는 테이블이 정하므로 여기서 바꿀 수 없다. draw_bitmap 이 픽셀당
+     * 2바이트로 길이를 계산하기 때문에 16 이외는 그냥 막는다. */
     ESP_RETURN_ON_FALSE(panel_dev_config->bits_per_pixel == 16, ESP_ERR_NOT_SUPPORTED, TAG,
-                        "RGB565 만 지원한다 (bits_per_pixel=%" PRIu32 ")",
-                        panel_dev_config->bits_per_pixel);
+                        "RGB565 만 지원한다");
 
     p = calloc(1, sizeof(nv3041a_panel_t));
     ESP_RETURN_ON_FALSE(p, ESP_ERR_NO_MEM, TAG, "no mem for nv3041a panel");
@@ -108,9 +229,10 @@ esp_err_t esp_lcd_new_panel_nv3041a(esp_lcd_panel_io_handle_t io,
         ESP_GOTO_ON_ERROR(gpio_config(&io_conf), err, TAG, "RST GPIO 설정 실패");
     }
 
-    /* TODO(나): rgb_ele_order → madctl_val, colmod_val 결정.
-     * MADCTL 은 0x36, COLMOD 는 0x3A 로 st7789 와 같은 MIPI DCS 다
-     * (`Arduino_NV3041A.h:29,30`). BGR 비트는 `LCD_CMD_BGR_BIT`. */
+    p->madctl_val = NV3041A_MADCTL_BASE;
+    if (panel_dev_config->rgb_ele_order == LCD_RGB_ELEMENT_ORDER_BGR) {
+        p->madctl_val |= LCD_CMD_BGR_BIT;
+    }
 
     p->io = io;
     p->reset_gpio_num = panel_dev_config->reset_gpio_num;
@@ -127,6 +249,7 @@ esp_err_t esp_lcd_new_panel_nv3041a(esp_lcd_panel_io_handle_t io,
     p->base.disp_on_off = panel_nv3041a_disp_on_off;
 
     *ret_panel = &p->base;
+    ESP_LOGI(TAG, "패널 생성 (RST=%d, MADCTL=0x%02x)", p->reset_gpio_num, p->madctl_val);
     return ESP_OK;
 
 err:
@@ -149,12 +272,19 @@ static esp_err_t panel_nv3041a_reset(esp_lcd_panel_t *panel)
 {
     nv3041a_panel_t *p = __containerof(panel, nv3041a_panel_t, base);
 
+    if (p->reset_gpio_num >= 0) {
+        gpio_set_level(p->reset_gpio_num, p->reset_level);
+        vTaskDelay(pdMS_TO_TICKS(10));
+        gpio_set_level(p->reset_gpio_num, !p->reset_level);
+        vTaskDelay(pdMS_TO_TICKS(NV3041A_RESET_DELAY_MS));
+        return ESP_OK;
+    }
+
     /* 이 보드는 RST 가 배선돼 있지 않다(`Arduino_GFX_dev_device.h:109`,
-     * GFX_NOT_DEFINED). 그래서 -1 로 들어오고 소프트 리셋으로 가야 한다.
-     * TODO(나): reset_gpio_num >= 0 이면 GPIO 토글, 아니면 SWRESET(0x01) +
-     *           대기. 대기 시간은 벤더 헤더가 120ms 로 잡고 있다
-     *           (`Arduino_NV3041A.h:10`). */
-    (void)p;
+     * GFX_NOT_DEFINED). 소프트 리셋으로 간다. 대기 시간은 벤더 헤더가 잡은
+     * 값이다(`Arduino_NV3041A.h:10`). */
+    ESP_RETURN_ON_ERROR(tx_cmd(p, LCD_CMD_SWRESET), TAG, "SWRESET 실패");
+    vTaskDelay(pdMS_TO_TICKS(NV3041A_RESET_DELAY_MS));
     return ESP_OK;
 }
 
@@ -162,18 +292,24 @@ static esp_err_t panel_nv3041a_init(esp_lcd_panel_t *panel)
 {
     nv3041a_panel_t *p = __containerof(panel, nv3041a_panel_t, base);
 
-    /* TODO(나): s_init_cmds 를 순회하며
-     *   esp_lcd_panel_io_tx_param(p->io, NV3041A_CMD(c.cmd),
-     *                             c.has_data ? &c.data : NULL,
-     *                             c.has_data ? 1 : 0);
-     * 그리고 c.delay_ms 만큼 vTaskDelay.
-     *
-     * MADCTL/COLMOD 는 벤더 테이블에도 들어 있다(0x36 은 없고 0x3A 가 0x01).
-     * 테이블 값과 panel_dev_config 로 계산한 값이 충돌하므로, 어느 쪽을
-     * 최종으로 둘 것인지 정해야 한다 — 테이블을 먼저 흘리고 뒤에서 덮는 쪽이
-     * 흔하다. */
-    (void)p;
-    (void)s_init_cmds;  /* 위 TODO 를 채우면 같이 지운다 */
+    for (size_t i = 0; i < sizeof(s_init_cmds) / sizeof(s_init_cmds[0]); i++) {
+        const nv3041a_init_cmd_t *c = &s_init_cmds[i];
+
+        ESP_RETURN_ON_ERROR(esp_lcd_panel_io_tx_param(p->io, NV3041A_CMD(c->cmd),
+                                                      c->has_data ? &c->data : NULL,
+                                                      c->has_data ? 1 : 0),
+                            TAG, "초기화 커맨드 0x%02x 실패", c->cmd);
+        if (c->delay_ms) {
+            vTaskDelay(pdMS_TO_TICKS(c->delay_ms));
+        }
+    }
+
+    /* MADCTL 은 벤더 테이블에 없다. 방향/색순서는 이쪽이 관리하므로 뒤에서 넣는다.
+     * COLMOD(0x3A)는 반대로 테이블이 정한다 — 위 주석 참고. */
+    ESP_RETURN_ON_ERROR(tx_cmd8(p, LCD_CMD_MADCTL, p->madctl_val), TAG, "MADCTL 실패");
+
+    ESP_LOGI(TAG, "초기화 완료 (%u 커맨드)",
+             (unsigned)(sizeof(s_init_cmds) / sizeof(s_init_cmds[0])));
     return ESP_OK;
 }
 
@@ -185,64 +321,88 @@ static esp_err_t panel_nv3041a_draw_bitmap(esp_lcd_panel_t *panel, int x_start, 
     ESP_RETURN_ON_FALSE(x_start < x_end && y_start < y_end, ESP_ERR_INVALID_ARG, TAG,
                         "잘못된 범위");
 
-    /* 이 프로젝트에서 이 함수가 갖는 의미가 하나 더 있다.
-     * Phase 4 배치 래퍼의 **검증 지점**이 여기다 — 플러시 버퍼가 의도대로
-     * 내부 SRAM 에서 왔는지를 `esp_ptr_external_ram(color_data)` 로 확인할 수
-     * 있는 유일한 자리다. DMA 가 실제로 건드리는 포인터가 여기로 들어온다.
-     * TODO(나): 부팅 후 첫 N 회만 로그를 남기는 식으로 넣는다. 매 프레임
-     *           찍으면 그 자체가 관측자 효과가 된다(Phase 1~3 과 같은 함정). */
+    x_start += p->x_gap;
+    x_end   += p->x_gap;
+    y_start += p->y_gap;
+    y_end   += p->y_gap;
 
-    /* TODO(나):
-     *   1. x_gap / y_gap 더하기
-     *   2. CASET(0x2A) ← {x>>8, x, xe>>8, xe}   tx_param
-     *   3. RASET(0x2B) ← {y>>8, y, ye>>8, ye}   tx_param
-     *   4. RAMWR(0x2C)                          tx_param, 파라미터 없음
-     *   5. 픽셀                                  tx_color(p->io, NV3041A_COLOR_CMD, ...)
+    /* 이 프로젝트에서 이 함수가 갖는 의미가 하나 더 있다. DMA 가 실제로 건드리는
+     * 포인터가 여기로 들어오므로, 플러시 버퍼가 의도대로 내부 SRAM 에서 왔는지
+     * 확인할 수 있는 유일한 자리다 — Phase 4 배치 래퍼의 검증 지점.
      *
-     * 4번과 5번이 따로인 것이 QSPI 라서다. 벤더 라이브러리도 RAMWR 는 0x02
-     * 경로로 보내고(`Arduino_NV3041A.cpp:69`), 픽셀 push 만 0x32/0x3C00 으로
-     * 간다. 길이는 (x_end-x_start)*(y_end-y_start)*2 바이트.
-     *
-     * ⚠️ tx_color 는 **논블로킹**이다(`esp_lcd_panel_io_spi.c:404` queue_trans).
-     * 리턴했다고 전송이 끝난 게 아니므로 color_data 버퍼를 바로 재사용하면 안
-     * 된다. LVGL 에 flush_ready 를 알리는 시점은 IO 의 on_color_trans_done
-     * 콜백이다. */
-    (void)p;
-    (void)color_data;
-    return ESP_OK;
+     * 매 프레임 찍으면 그 자체가 관측자 효과가 되므로 처음 몇 번만 남긴다. */
+    static int s_placement_logs = 3;
+    if (s_placement_logs > 0) {
+        s_placement_logs--;
+        ESP_LOGI(TAG, "flush 버퍼 %p → %s (%dx%d)",
+                 color_data,
+                 esp_ptr_external_ram(color_data) ? "PSRAM (DMA 불가!)" : "내부 SRAM",
+                 x_end - x_start, y_end - y_start);
+    }
+
+    const uint8_t caset[] = {
+        (uint8_t)(x_start >> 8), (uint8_t)x_start,
+        (uint8_t)((x_end - 1) >> 8), (uint8_t)(x_end - 1),
+    };
+    const uint8_t raset[] = {
+        (uint8_t)(y_start >> 8), (uint8_t)y_start,
+        (uint8_t)((y_end - 1) >> 8), (uint8_t)(y_end - 1),
+    };
+
+    ESP_RETURN_ON_ERROR(esp_lcd_panel_io_tx_param(p->io, NV3041A_CMD(LCD_CMD_CASET),
+                                                  caset, sizeof(caset)), TAG, "CASET 실패");
+    ESP_RETURN_ON_ERROR(esp_lcd_panel_io_tx_param(p->io, NV3041A_CMD(LCD_CMD_RASET),
+                                                  raset, sizeof(raset)), TAG, "RASET 실패");
+    /* 벤더 라이브러리도 RAMWR 는 0x02 경로로 보내고(`Arduino_NV3041A.cpp:69`)
+     * 픽셀 push 만 0x32/0x3C00 으로 간다. 그래서 두 번 나간다. */
+    ESP_RETURN_ON_ERROR(tx_cmd(p, LCD_CMD_RAMWR), TAG, "RAMWR 실패");
+
+    const size_t len = (size_t)(x_end - x_start) * (size_t)(y_end - y_start) * 2;
+
+    /* 논블로킹이다(`esp_lcd_panel_io_spi.c:404`, queue_trans). 리턴했다고 전송이
+     * 끝난 게 아니므로 color_data 를 바로 재사용하면 안 된다. 완료는 IO 의
+     * on_color_trans_done 콜백으로 온다 — lcd_board.c 가 그것으로 LVGL 에
+     * flush_ready 를 알린다. */
+    return esp_lcd_panel_io_tx_color(p->io, NV3041A_COLOR_CMD, color_data, len);
 }
 
 static esp_err_t panel_nv3041a_invert_color(esp_lcd_panel_t *panel, bool invert)
 {
     nv3041a_panel_t *p = __containerof(panel, nv3041a_panel_t, base);
 
-    /* TODO(나): INVON(0x21) / INVOFF(0x20), 파라미터 없음. */
-    (void)p;
-    (void)invert;
-    return ESP_OK;
+    p->invert_on = invert;
+    return tx_cmd(p, invert ? LCD_CMD_INVON : LCD_CMD_INVOFF);
 }
 
 static esp_err_t panel_nv3041a_mirror(esp_lcd_panel_t *panel, bool mirror_x, bool mirror_y)
 {
     nv3041a_panel_t *p = __containerof(panel, nv3041a_panel_t, base);
 
-    /* TODO(나): madctl_val 의 MX(0x40)/MY(0x80) 비트를 손보고 MADCTL(0x36) 재전송.
-     * 값을 구조체에 들고 있는 이유는 MADCTL 이 읽기 불가라서다 — mirror 와
-     * swap_xy 가 같은 레지스터를 나눠 쓰므로 마지막 값을 기억해야 한다. */
-    (void)p;
-    (void)mirror_x;
-    (void)mirror_y;
-    return ESP_OK;
+    /* 네이티브 방향이 이미 MX|MY 라(`NV3041A_MADCTL_BASE`) "미러" 는 기본값을
+     * 뒤집는 것이 된다. */
+    if (mirror_x) {
+        p->madctl_val &= (uint8_t)~NV3041A_MADCTL_MX;
+    } else {
+        p->madctl_val |= NV3041A_MADCTL_MX;
+    }
+    if (mirror_y) {
+        p->madctl_val &= (uint8_t)~NV3041A_MADCTL_MY;
+    } else {
+        p->madctl_val |= NV3041A_MADCTL_MY;
+    }
+    return tx_cmd8(p, LCD_CMD_MADCTL, p->madctl_val);
 }
 
 static esp_err_t panel_nv3041a_swap_xy(esp_lcd_panel_t *panel, bool swap_axes)
 {
     nv3041a_panel_t *p = __containerof(panel, nv3041a_panel_t, base);
 
-    /* TODO(나): madctl_val 의 MV(0x20) 비트. */
-    (void)p;
-    (void)swap_axes;
-    return ESP_OK;
+    if (swap_axes) {
+        p->madctl_val |= NV3041A_MADCTL_MV;
+    } else {
+        p->madctl_val &= (uint8_t)~NV3041A_MADCTL_MV;
+    }
+    return tx_cmd8(p, LCD_CMD_MADCTL, p->madctl_val);
 }
 
 static esp_err_t panel_nv3041a_set_gap(esp_lcd_panel_t *panel, int x_gap, int y_gap)
@@ -258,8 +418,5 @@ static esp_err_t panel_nv3041a_disp_on_off(esp_lcd_panel_t *panel, bool on_off)
 {
     nv3041a_panel_t *p = __containerof(panel, nv3041a_panel_t, base);
 
-    /* TODO(나): DISPON(0x29) / DISPOFF(0x28), 파라미터 없음. */
-    (void)p;
-    (void)on_off;
-    return ESP_OK;
+    return tx_cmd(p, on_off ? LCD_CMD_DISPON : LCD_CMD_DISPOFF);
 }

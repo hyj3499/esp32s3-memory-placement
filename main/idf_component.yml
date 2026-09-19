@@ -1,0 +1,11 @@
+## 외부 의존성.
+##
+## esp_lvgl_port 는 일부러 넣지 않는다. 그 컴포넌트는 드로우 버퍼를 자기가
+## heap_caps_malloc 으로 잡는데, 이 프로젝트에서 드로우 버퍼의 배치를 누가
+## 정하는가가 Phase 4 의 본론이다. 포트를 쓰면 검증할 대상이 사라진다.
+## flush 콜백 + tick + 태스크는 lcd_board.c / ui_dashboard.c 에서 직접 쓴다.
+dependencies:
+  idf:
+    version: ">=5.5"
+  lvgl/lvgl:
+    version: "^9.3.0"
