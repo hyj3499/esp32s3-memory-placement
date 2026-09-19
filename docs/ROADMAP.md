@@ -362,18 +362,47 @@ Phase 2 에서 `largest` 4,096 을 얻으려고 AES 바운스 2,984 를 대가�
       QSPI 스위치는 `esp_lcd_panel_io_spi_config_t.flags.quad_mode = 1` +
       `spi_bus_config_t` 의 `data0~3_io_num`.
 
-      ⚠️ **핀맵은 아직 검증 안 됨.** 같은 모델명 보드의 서드파티 레포에서 얻은 값이라
-      **내 보드에서 확인하기 전에는 데이터가 아니다.** 첫 점등 전에 대조할 것.
+      ✅ **핀맵 — 벤더 자료로 확정 (2026-09-19).** 보드 동봉 자료
+      (`Downloads/JC4827W543`)의 `Arduino_GFX_dev_device.h:104-109`,
+      활성화된 `#define ESP32_4827A043_QSPI` 블록. 서드파티 레포 2곳의 값과도 일치.
 
       | 신호 | GPIO | 신호 | GPIO |
       |---|---:|---|---:|
       | LCD CS | 45 | LCD SCK | 47 |
       | LCD D0 | 21 | LCD D1 | 48 |
       | LCD D2 | 40 | LCD D3 | 39 |
-      | 백라이트 (LEDC PWM) | 1 | LCD RST | 미정의 |
-      | 터치 GT911 SCL / SDA | 4 / 8 | 터치 RST / INT | 38 / 3 |
+      | 백라이트 | 1 | LCD RST | **미배선** (`GFX_NOT_DEFINED`) |
 
-      출처: `profi-max/JC4827W543_4.3inch_ESP32S3_board`, `morfirk/JC4827W543_ESP32`
+      RST 가 배선돼 있지 않다 → `reset_gpio_num = -1` 이고 리셋은 `SWRESET`(0x01)
+      소프트 경로로 가야 한다.
+      ⚠️ 동봉 자료 중 `2_1_LVGL_widgets/demo/esp_panel_board_custom_conf.h` 는
+      **다른 보드 것**이다(`JC4880P443C_I_W_Y`, JD9165, MIPI-DSI, ESP32-P4).
+      패키지에 잘못 들어간 템플릿이므로 참고하지 말 것.
+
+      ✅ **QSPI 커맨드 프레이밍 — 확정.** 동봉 라이브러리
+      `Arduino_GFX-1.4.4/src/databus/Arduino_ESP32QSPI.cpp` 가 쓰는 형식
+      (cmd 8bit + addr 24bit):
+
+      | 용도 | cmd | addr | 데이터 선 |
+      |---|---|---|---|
+      | 커맨드/파라미터 | `0x02` | `c << 8` | 1선 |
+      | 픽셀 데이터 | `0x32` | `0x003C00` | **4선** |
+
+      esp_lcd 에는 cmd/addr 페이즈 구분이 없으므로 둘을 합쳐 **32비트 커맨드
+      하나**로 보낸다 → 패널 IO 를 `lcd_cmd_bits = 32` 로 만들어야 한다.
+      **QSPI 는 "전부 4선" 이 아니다** — `esp_lcd_panel_io_spi.c:398` 에서
+      `SPI_TRANS_MODE_QIO` 가 붙는 것은 컬러 데이터 페이즈뿐이다.
+
+      ✅ **초기화 시퀀스 — 벤더 문서 확보.** `latest initialization_4031A-01配IPS.docx`
+      (= `4-Driver_IC_Data_Sheet/4031A-01配IPS.docx`), `Write_Comm`/`Write_Data`
+      **96쌍**. 파라미터가 전부 1바이트이고, 예외는 두 개뿐 —
+      `0x11`(SLPOUT, 뒤에 120ms 대기)과 `0x29`(DISPON)는 파라미터가 없다.
+      창 설정은 표준 MIPI DCS 다 (CASET `0x2A` / RASET `0x2B` / RAMWR `0x2C` /
+      MADCTL `0x36` / COLMOD `0x3A`).
+
+- [x] 드라이버 골격 — `main/lcd_nv3041a.c/h`. vtable 배선·팩토리·프레이밍 매크로까지.
+      초기화 테이블과 각 vtable 본체는 `TODO(나)` 로 비워 뒀다. 빌드 통과
+      (바이너리 `0xef010` 불변 — 호출자가 없어 링커가 전부 걷어낸다)
 - [ ] LVGL 통합 (`idf.py add-dependency`)
       💡 파티션을 1500K로 올려 앱 여유가 36%가 됐다. "플래시 때문에 LVGL 불가"
       라던 제약은 풀렸다
