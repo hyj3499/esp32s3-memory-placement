@@ -288,3 +288,75 @@ mbedTLS 할당 전체가 추적 대상이 된다.
 그리고 `--wrap` 의 이 성질은 IDF 만의 문제가 아니다. 링커 수준 가로채기를 쓰는 모든
 계측(`--wrap`, `LD_PRELOAD`)이 **같은 번역 단위 내부 호출과 인라인된 호출을 놓친다.**
 도구가 "무엇을 못 보는지" 를 먼저 확인하는 습관이 필요하다.
+
+---
+
+## 5. LVGL 차트의 점 마커가 크기를 0 으로 줘도 안 꺼짐
+
+**발생 시점:** Phase 4, 첫 점등 (2026-09-19)
+**환경:** ESP-IDF v5.5.5, `lvgl/lvgl` 9.6.0, `lv_chart`, 기본 테마
+
+### 증상
+
+대시보드가 처음 떴는데 오른쪽 차트 영역에 **흰 점이 흩뿌려져** 있었다. 선 그래프는
+정상으로 그려지는데 데이터 점마다 작은 점이 하나씩 박혀 있다.
+
+점 마커는 껐다고 생각한 상태였다.
+
+```c
+lv_obj_set_style_size(s_chart, 0, 0, LV_PART_INDICATOR);  /* 점 표시 끔 */
+```
+
+### 원인
+
+두 가지가 겹쳤다.
+
+**① 크기 0 은 "안 그림" 이 아니라 "반지름 0" 이다.**
+`lv_chart.c:1238` 이 스타일 크기를 그대로 쓰지 않고 반으로 나눠 반지름으로 쓴다.
+
+```c
+int32_t point_w = lv_obj_get_style_width_internal(obj, LV_PART_INDICATOR) / 2;
+int32_t point_h = lv_obj_get_style_height_internal(obj, LV_PART_INDICATOR) / 2;
+```
+
+0 / 2 = 0 이므로 반지름 0 인 사각형, 즉 **1픽셀**이 점마다 그대로 찍힌다.
+그리기를 건너뛰는 분기는 없다.
+
+**② 색과 불투명도는 테마가 이미 박아 놨고, 나는 크기만 덮었다.**
+기본 테마가 `LV_PART_INDICATOR` 에 스타일을 붙인다(`lv_theme_default.c:973`).
+
+```c
+lv_style_set_radius(&theme->styles.chart_indic, LV_RADIUS_CIRCLE);
+lv_style_set_size(&theme->styles.chart_indic, chart_size, chart_size);   /* 8 */
+lv_style_set_bg_color(&theme->styles.chart_indic, theme->base.color_primary);
+lv_style_set_bg_opa(&theme->styles.chart_indic, LV_OPA_COVER);           /* :457 */
+```
+
+`lv_obj_set_style_size()` 는 이 중 **size 만** 덮는다. `bg_opa = LV_OPA_COVER` 가
+그대로 남아 있으므로 마커는 계속 불투명하게 그려진다. 내가 한 일은 마커를 끈 것이
+아니라 **8px 원을 1px 점으로 줄인 것**뿐이었다.
+
+### 해결
+
+크기가 아니라 불투명도로 끈다.
+
+```c
+lv_obj_set_style_bg_opa(s_chart, LV_OPA_TRANSP, LV_PART_INDICATOR);
+lv_obj_set_style_size(s_chart, 0, 0, LV_PART_INDICATOR);
+```
+
+`lv_draw_rect` 는 opa 가 투명이면 그리기 자체를 건너뛴다.
+
+⚠️ 이 수정은 빌드만 통과한 상태다. 재플래시로 확인해야 한다.
+
+### 교훈
+
+**"크기 0" 이 "안 보임" 을 뜻한다고 가정하면 안 된다.** 위젯이 그 값을 어떻게
+해석하는지는 구현에 달렸고, 여기서는 반지름이었다. 1px 이 남는 것은 0 으로 줄여도
+사라지지 않는 종류의 잔재다.
+
+그리고 **테마는 내가 건드리지 않은 속성을 이미 채워 놓았다.** 스타일 하나를
+덮어썼다고 그 파트 전체를 통제하게 되는 것이 아니다. 무언가를 "끄려면" 끄려는
+동작을 직접 지배하는 속성을 찾아야 한다 — 크기가 아니라 불투명도, 색이 아니라
+`opa` 다. 이것도 `TROUBLESHOOTING #4` 와 성질이 같다: **도구/라이브러리가 무엇을
+하는지 소스로 확인하기 전까지는 짐작이다.**
