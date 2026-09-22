@@ -132,7 +132,8 @@ menu "Multi-heap Manager"
             Vendor demo runs at 80 MHz. Start lower for first bring-up.
 
     # 이 프로젝트에서 가장 설계다운 결정. 드로우 버퍼는 DMA 가 직접 읽으므로
-    # 내부 SRAM 이 물리적 강제이고, 내부 SRAM 은 이 프로젝트가 아끼려는 바로
+    # 내부 SRAM 이 사실상 강제이고(PSRAM 에 두면 SPI 드라이버가 내부에 바운스
+    # 버퍼를 잡는다), 내부 SRAM 은 이 프로젝트가 아끼려는 바로
     # 그 자원이다. 즉 대시보드를 키우면 관측 대상이 줄어든다.
     #
     # 480 x N x 2 바이트. 부하 중 내부 연속 블록 실측이 188,416 이므로
